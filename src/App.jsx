@@ -1,36 +1,44 @@
 import React, { useState } from 'react';
 import TopBar from './components/TopBar';
+import LeftRail from './components/LeftRail';
+import DrawingTools from './components/DrawingTools';
 import MainChart from './components/MainChart';
 import RightPanel from './components/RightPanel';
 import AlphaBarcode from './components/AlphaBarcode';
 import ExecutionModal from './components/ExecutionModal';
-import { useMarketData } from './hooks/useMarketData';   // 👈 लाइव डेटा
+import { useMarketData } from './hooks/useMarketData';
 
 function App() {
   const [isPaper, setIsPaper] = useState(true);
-  
-  // ⚡ क्वांट ब्रिज डेटा पाइपलाइन ऐक्टिवेट करो
   useMarketData();
 
   return (
-    <div className="h-screen w-full flex flex-col bg-[#0A0A0C] text-[#E2E8F0] font-sans overflow-hidden">
-      {/* टॉप बार */}
-      <div className="h-[40px] shrink-0 border-b border-white/10 bg-white/5 backdrop-blur-md">
+    <div className="h-screen w-full flex flex-col bg-[color:var(--color-bg)] text-[color:var(--color-text-primary)] font-sans overflow-hidden">
+      {/* Top toolbar */}
+      <div className="h-[38px] shrink-0 border-b border-[color:var(--color-border)] bg-[color:var(--color-surface)]">
         <TopBar isPaper={isPaper} setIsPaper={setIsPaper} />
       </div>
 
-      {/* मेन एरिया */}
-      <div className="flex-1 w-full flex overflow-hidden">
-        <div className="w-[70%] relative bg-[#0A0A0C]">
-          <MainChart />
+      {/* Main area: left rail + drawing tools + chart + right panel */}
+      <div className="flex-1 min-h-0 w-full flex overflow-hidden">
+        <LeftRail />
+
+        {/* Chart + drawing tools */}
+        <div className="flex-1 min-w-0 flex">
+          <DrawingTools />
+          <div className="flex-1 min-w-0 relative border-l border-[color:var(--color-border)]">
+            <MainChart />
+          </div>
         </div>
-        <div className="w-[30%] bg-[#0D0D12] border-l border-white/5">
+
+        {/* Right panel: watchlist + Alpha engine */}
+        <div className="w-[300px] shrink-0 border-l border-[color:var(--color-border)] bg-[color:var(--color-surface)]">
           <RightPanel />
         </div>
       </div>
 
-      {/* बॉटम अल्फा बारकोड */}
-      <div className="h-[30px] shrink-0 border-t border-white/10 bg-[#0A0A0C] flex items-center">
+      {/* Bottom status bar */}
+      <div className="h-[26px] shrink-0 border-t border-[color:var(--color-border)] bg-[color:var(--color-surface)]">
         <AlphaBarcode />
       </div>
 

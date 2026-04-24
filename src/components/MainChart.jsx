@@ -62,6 +62,7 @@ const MainChart = () => {
   const [hover, setHover]       = useState(null);
   const [hoverVol, setHoverVol] = useState(null);
   const [hoverImb, setHoverImb] = useState(null);
+  const [liveCandle, setLiveCandle] = useState(null); // latest simulated bar for HUD fallback
 
   /* ─── Build chart once ─── */
   useEffect(() => {
@@ -173,6 +174,7 @@ const MainChart = () => {
       price: candles.at(-1).close,
       candle: candles.at(-1),
     };
+    setLiveCandle(candles.at(-1));
 
     const crosshairHandler = (param) => {
       if (!param.time) { setHover(null); setHoverVol(null); setHoverImb(null); return; }
@@ -229,6 +231,7 @@ const MainChart = () => {
       candleRef.current.update(newCandle);
       lastRef.current.candle = newCandle;
       lastRef.current.price  = newCandle.close;
+      setLiveCandle(newCandle);
 
       updateTicker(activeSymbol, {
         price: newCandle.close,
@@ -249,7 +252,7 @@ const MainChart = () => {
     return stop;
   }, [simulate]);
 
-  const ohlc   = hover || lastRef.current.candle;
+  const ohlc   = hover || liveCandle;
   const upBar  = ohlc && ohlc.close >= ohlc.open;
   const barCol = upBar ? 'text-[color:var(--color-up)]' : 'text-[color:var(--color-down)]';
   const fmt    = (n) => (n == null ? '—' : Number(n).toFixed(2));
