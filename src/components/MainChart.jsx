@@ -1,229 +1,316 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { createChart, CandlestickSeries, LineSeries } from 'lightweight-charts';
+import {
+  createChart,
+  CandlestickSeries,
+  HistogramSeries,
+  LineSeries,
+} from 'lightweight-charts';
 import { useMarketStore } from '../stores/useMarketStore';
+import { Zap } from 'lucide-react';
+
+/* ───────────────────────────────────────────────
+   Synthetic seed: candles + volume + buy/sell delta
+   ─────────────────────────────────────────────── */
+const generateSeedData = (count = 260, startPrice = 77000) => {
+  const candles = [];
+  const volumes = [];
+  const imbalance = [];
+
+  let time = Math.floor(Date.now() / 1000) - count * 60;
+  let price = startPrice;
+
+  for (let i = 0; i < count; i++) {
+    const open = price;
+    const drift = (Math.random() - 0.48) * 120;
+    const close = open + drift;
+    const high = Math.max(open, close) + Math.random() * 70;
+    const low  = Math.min(open, close) - Math.random() * 70;
+    candles.push({ time, open, high, low, close });
+
+    const vol = 200 + Math.random() * 1800 + Math.abs(close - open) * 4;
+    volumes.push({
+      time,
+      value: vol,
+      color: close >= open ? 'rgba(8, 153, 129, 0.55)' : 'rgba(242, 54, 69, 0.55)',
+    });
+
+    // Buy-sell imbalance (delta)
+    const buyRatio = close >= open ? 0.52 + Math.random() * 0.35 : 0.12 + Math.random() * 0.35;
+    const delta = vol * (buyRatio - (1 - buyRatio));
+    imbalance.push({
+      time,
+      value: delta,
+      color: delta >= 0 ? 'rgba(38, 166, 154, 0.9)' : 'rgba(239, 83, 80, 0.9)',
+    });
+
+    price = close;
+    time += 60;
+  }
+  return { candles, volumes, imbalance };
+};
 
 const MainChart = () => {
-  const chartContainerRef = useRef(null);
-  const livePriceSeriesRef = useRef(null);
-  const chartRef = useRef(null);
-  const mockTimerRef = useRef(null);
-  const lastRealUpdateRef = useRef(0);
+  const containerRef  = useRef(null);
+  const chartRef      = useRef(null);
+  const candleRef     = useRef(null);
+  const volumeRef     = useRef(null);
+  const imbalanceRef  = useRef(null);
+  const emaRef        = useRef(null);
+  const lastRef       = useRef({ time: 0, price: 0, candle: null });
 
-  const { activeSymbol, tickerData, marketState, setExecuteOpen, updateTicker } = useMarketStore();
-  const [livePrice, setLivePrice] = useState(null);
+  const { activeSymbol, marketState, setExecuteOpen, updateTicker } = useMarketStore();
+  const [hover, setHover]       = useState(null);
+  const [hoverVol, setHoverVol] = useState(null);
+  const [hoverImb, setHoverImb] = useState(null);
 
-  // 🧠 मॉक टिक जनरेटर – बैकएंड के बिना लाइव मूवमेंट
-  const startMockTicks = useCallback(() => {
-    if (mockTimerRef.current) clearInterval(mockTimerRef.current);
-    
-    // Get latest state without subscribing
-    const basePrice = useMarketStore.getState().tickerData[activeSymbol]?.price || 77000;
-    let lastPrice = basePrice;
-
-    mockTimerRef.current = setInterval(() => {
-      const now = Date.now();
-      // अगर पिछले 2 सेकंड में रीयल डेटा आया है, तो मॉक बंद करो
-      if (now - lastRealUpdateRef.current < 2000) return;
-
-      // रैंडम वॉक
-      const change = (Math.random() - 0.5) * 50;
-      lastPrice = Math.max(100, lastPrice + change);
-
-      // चार्ट पर लाइव लाइन अपडेट
-      if (livePriceSeriesRef.current) {
-        livePriceSeriesRef.current.update({
-          time: Math.floor(now / 1000),
-          value: lastPrice,
-        });
-      }
-      setLivePrice(lastPrice);
-
-      // ज़ुस्टैंड स्टोर भी अपडेट करो ताकि HUD, अल्फा स्कोर, वगैरह सब एक्टिव हों
-      updateTicker(activeSymbol, {
-        price: lastPrice,
-        change: ((lastPrice - basePrice) / basePrice) * 100,
-        volume: Math.floor(Math.random() * 1000),
-        alpha_score: 50 + Math.random() * 40,
-        hurst: 0.45 + Math.random() * 0.3,
-        entropy: 0.2 + Math.random() * 0.5,
-        action: lastPrice > basePrice ? 'BUY' : 'SELL',
-        conviction: Math.random() > 0.5 ? 'HIGH' : 'MEDIUM',
-        vpin: Math.random(),
-        ofi: (Math.random() - 0.5) * 4,
-        wave_active: Math.random() > 0.5,
-        regime: Math.random() > 0.5 ? 'BULL_TRENDING' : 'MEAN_REVERTING',
-        probability: 50 + Math.random() * 30,
-        edge_score: (Math.random() - 0.5) * 0.3,
-        kelly_fraction: Math.random() * 0.2,
-        market_state: Math.random() > 0.5 ? 'BREAKOUT' : 'SETUP',
-        candle_color: Math.random() > 0.8 ? 'neon_cyan' : 'normal',
-        sentiment: lastPrice > basePrice ? 'BULLISH' : 'BEARISH',
-        fractal_dim: 1.4 + Math.random() * 0.3,
-        dfa: 0.4 + Math.random() * 0.4,
-        sweep: Math.random() > 0.9,
-        narrative: '',
-      });
-    }, 500);
-  }, [activeSymbol, updateTicker]);
-
-  // 1️⃣ स्टैटिक चार्ट बनाना
+  /* ─── Build chart once ─── */
   useEffect(() => {
-    if (!chartContainerRef.current) return;
+    if (!containerRef.current) return;
 
-    const chart = createChart(chartContainerRef.current, {
+    const chart = createChart(containerRef.current, {
+      autoSize: true,
       layout: {
-        background: { type: 'solid', color: '#0A0A0C' },
-        textColor: '#94A3B8',
-        fontFamily: "'JetBrains Mono', 'Inter', sans-serif",
+        background: { type: 'solid', color: '#131722' },
+        textColor: '#B2B5BE',
+        fontFamily: "'Inter', system-ui, sans-serif",
+        fontSize: 11,
+        panes: { separatorColor: '#2A2E39', separatorHoverColor: '#363A45' },
       },
       grid: {
-        vertLines: { color: 'rgba(255, 255, 255, 0.03)' },
-        horzLines: { color: 'rgba(255, 255, 255, 0.03)' },
-      },
-      crosshair: { mode: 0 },
-      timeScale: {
-        timeVisible: true,
-        secondsVisible: true,
-        borderColor: 'rgba(255, 255, 255, 0.1)',
+        vertLines: { color: 'rgba(42, 46, 57, 0.45)' },
+        horzLines: { color: 'rgba(42, 46, 57, 0.45)' },
       },
       rightPriceScale: {
-        borderColor: 'rgba(255, 255, 255, 0.1)',
+        borderColor: '#2A2E39',
+        scaleMargins: { top: 0.08, bottom: 0.08 },
+      },
+      timeScale: {
+        borderColor: '#2A2E39',
+        timeVisible: true,
+        secondsVisible: false,
+        rightOffset: 6,
+        barSpacing: 7,
+      },
+      crosshair: {
+        mode: 1,
+        vertLine: { color: '#4C525E', width: 1, style: 3, labelBackgroundColor: '#2A2E39' },
+        horzLine: { color: '#4C525E', width: 1, style: 3, labelBackgroundColor: '#2A2E39' },
       },
     });
-
     chartRef.current = chart;
 
-    // बैकग्राउंड कैंडलस्टिक्स (डमी)
+    // Pane 0 — candles
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#10B981',
-      downColor: '#EF4444',
+      upColor: '#089981',
+      downColor: '#F23645',
       borderVisible: false,
-      wickUpColor: '#10B981',
-      wickDownColor: '#EF4444',
+      wickUpColor: '#089981',
+      wickDownColor: '#F23645',
+      priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
     });
-    const dummyData = [];
-    let time = Math.floor(Date.now() / 1000) - 100 * 60;
-    let price = 77000;
-    for (let i = 0; i < 100; i++) {
-      const open = price;
-      const close = price + (Math.random() - 0.5) * 100;
-      dummyData.push({
-        time,
-        open,
-        high: Math.max(open, close) + Math.random() * 50,
-        low: Math.min(open, close) - Math.random() * 50,
-        close,
-      });
-      time += 60;
-      price = close;
+    candleRef.current = candleSeries;
+
+    // EMA 20 overlay on pane 0
+    const emaSeries = chart.addSeries(LineSeries, {
+      color: '#F5A623',
+      lineWidth: 1,
+      lastValueVisible: false,
+      priceLineVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    emaRef.current = emaSeries;
+
+    // Pane 1 — Volume
+    const volumeSeries = chart.addSeries(
+      HistogramSeries,
+      { priceFormat: { type: 'volume' }, priceScaleId: '' },
+      1
+    );
+    volumeSeries.priceScale().applyOptions({
+      scaleMargins: { top: 0.15, bottom: 0 },
+      borderColor: '#2A2E39',
+    });
+    volumeRef.current = volumeSeries;
+
+    // Pane 2 — Buy/Sell Imbalance (Delta histogram)
+    const imbalanceSeries = chart.addSeries(
+      HistogramSeries,
+      { priceFormat: { type: 'volume' }, priceScaleId: '', base: 0 },
+      2
+    );
+    imbalanceSeries.priceScale().applyOptions({
+      scaleMargins: { top: 0.2, bottom: 0.2 },
+      borderColor: '#2A2E39',
+    });
+    imbalanceRef.current = imbalanceSeries;
+
+    // Seed data
+    const { candles, volumes, imbalance } = generateSeedData();
+    candleSeries.setData(candles);
+    volumeSeries.setData(volumes);
+    imbalanceSeries.setData(imbalance);
+
+    // EMA(20)
+    const emaArr = [];
+    const k = 2 / (20 + 1);
+    let ema = candles[0].close;
+    for (const c of candles) {
+      ema = c.close * k + ema * (1 - k);
+      emaArr.push({ time: c.time, value: ema });
     }
-    candleSeries.setData(dummyData);
+    emaSeries.setData(emaArr);
 
-    // कालमन स्मूथ लाइन (बैकग्राउंड)
-    const kalmanSeries = chart.addSeries(LineSeries, {
-      color: 'rgba(0, 242, 255, 0.5)',
-      lineWidth: 2,
-      crosshairMarkerVisible: false,
-    });
-    const kalmanData = dummyData.map(d => ({ time: d.time, value: (d.open + d.close) / 2 }));
-    kalmanSeries.setData(kalmanData);
+    // Pane heights
+    try {
+      const panes = chart.panes?.();
+      if (panes?.[0]?.setHeight) panes[0].setHeight(420);
+      if (panes?.[1]?.setHeight) panes[1].setHeight(110);
+      if (panes?.[2]?.setHeight) panes[2].setHeight(110);
+    } catch { /* version-dependent */ }
 
-    // लाइव प्राइस लाइन
-    const lineSeries = chart.addSeries(LineSeries, {
-      color: '#00F2FF',
-      lineWidth: 2,
-      crosshairMarkerVisible: false,
-      lastValueVisible: true,
-      priceFormat: {
-        type: 'price',
-        precision: 2,
-        minMove: 0.01,
-      },
-    });
-    livePriceSeriesRef.current = lineSeries;
-
-    const resizeHandler = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({
-          width: chartContainerRef.current.clientWidth,
-          height: chartContainerRef.current.clientHeight,
-        });
-      }
+    lastRef.current = {
+      time: candles.at(-1).time,
+      price: candles.at(-1).close,
+      candle: candles.at(-1),
     };
-    const observer = new ResizeObserver(resizeHandler);
-    observer.observe(chartContainerRef.current);
+
+    const crosshairHandler = (param) => {
+      if (!param.time) { setHover(null); setHoverVol(null); setHoverImb(null); return; }
+      const c = param.seriesData.get(candleSeries);
+      const v = param.seriesData.get(volumeSeries);
+      const d = param.seriesData.get(imbalanceSeries);
+      if (c) setHover(c);
+      if (v) setHoverVol(v.value);
+      if (d) setHoverImb(d.value);
+    };
+    chart.subscribeCrosshairMove(crosshairHandler);
 
     return () => {
-      observer.disconnect();
+      chart.unsubscribeCrosshairMove(crosshairHandler);
       chart.remove();
     };
   }, []);
 
-  // 2️⃣ बैकएंड से रीयल-टाइम अपडेट सुनना (स्टोर सब्सक्रिप्शन)
-  useEffect(() => {
-    const unsub = useMarketStore.subscribe(
-      (state) => state.tickerData[activeSymbol]?.price,
-      (newPrice) => {
-        if (newPrice && livePriceSeriesRef.current) {
-          lastRealUpdateRef.current = Date.now();
-          const now = Math.floor(Date.now() / 1000);
-          livePriceSeriesRef.current.update({
-            time: now,
-            value: newPrice,
-          });
-          setLivePrice(newPrice);
-        }
-      },
-      { fireImmediately: false }
-    );
-    return () => unsub?.();
-  }, [activeSymbol]);
+  /* ─── Live tick simulator ─── */
+  const simulate = useCallback(() => {
+    const id = setInterval(() => {
+      const cur = lastRef.current.candle;
+      if (!cur || !candleRef.current) return;
 
-  // 3️⃣ सिंबल बदलने पर लाइन साफ़ करें और मॉक रीस्टार्ट करें
-  useEffect(() => {
-    if (livePriceSeriesRef.current) {
-      livePriceSeriesRef.current.setData([]);
-    }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLivePrice(null);
-    startMockTicks();
-    return () => {
-      if (mockTimerRef.current) clearInterval(mockTimerRef.current);
-    };
-  }, [activeSymbol, startMockTicks]);
+      const now = Math.floor(Date.now() / 1000);
+      const step = (Math.random() - 0.5) * 40;
+      let newCandle = { ...cur };
 
-  // पहली बार माउंट पर मॉक शुरू करो
+      if (now - cur.time >= 60) {
+        const open = cur.close;
+        const close = open + step;
+        newCandle = {
+          time: now, open, close,
+          high: Math.max(open, close),
+          low:  Math.min(open, close),
+        };
+        const vol = 200 + Math.random() * 1500;
+        const up = close >= open;
+        volumeRef.current?.update({
+          time: now, value: vol,
+          color: up ? 'rgba(8, 153, 129, 0.55)' : 'rgba(242, 54, 69, 0.55)',
+        });
+        const delta = vol * (Math.random() * 0.8 - 0.4);
+        imbalanceRef.current?.update({
+          time: now, value: delta,
+          color: delta >= 0 ? 'rgba(38, 166, 154, 0.9)' : 'rgba(239, 83, 80, 0.9)',
+        });
+      } else {
+        newCandle.close = cur.close + step;
+        newCandle.high  = Math.max(cur.high, newCandle.close);
+        newCandle.low   = Math.min(cur.low,  newCandle.close);
+      }
+
+      candleRef.current.update(newCandle);
+      lastRef.current.candle = newCandle;
+      lastRef.current.price  = newCandle.close;
+
+      updateTicker(activeSymbol, {
+        price: newCandle.close,
+        change: ((newCandle.close - 77000) / 77000) * 100,
+        alpha_score: 40 + Math.random() * 50,
+        vpin: Math.random(),
+        ofi: (Math.random() - 0.5) * 3,
+        hurst: 0.4 + Math.random() * 0.4,
+        entropy: 0.2 + Math.random() * 0.4,
+        action: newCandle.close >= newCandle.open ? 'BUY' : 'SELL',
+      });
+    }, 900);
+    return () => clearInterval(id);
+  }, [activeSymbol, updateTicker]);
+
   useEffect(() => {
-    startMockTicks();
-    return () => {
-      if (mockTimerRef.current) clearInterval(mockTimerRef.current);
-    };
-  }, [startMockTicks]);
+    const stop = simulate();
+    return stop;
+  }, [simulate]);
+
+  const ohlc   = hover || lastRef.current.candle;
+  const upBar  = ohlc && ohlc.close >= ohlc.open;
+  const barCol = upBar ? 'text-[color:var(--color-up)]' : 'text-[color:var(--color-down)]';
+  const fmt    = (n) => (n == null ? '—' : Number(n).toFixed(2));
 
   return (
-    <div className="w-full h-full relative">
-      <div ref={chartContainerRef} className="w-full h-full absolute inset-0" />
-
-      {/* लाइव प्राइस ओवरले */}
-      {livePrice && (
-        <div className="absolute bottom-12 left-4 z-10 bg-black/60 backdrop-blur-sm px-3 py-1.5 rounded border border-[#00F2FF]/30">
-          <span className="text-xs text-[#94A3B8] mr-2">{activeSymbol}</span>
-          <span className="text-xl font-mono font-bold text-[#00F2FF]">
-            {livePrice.toFixed(2)}
+    <div className="w-full h-full relative bg-[color:var(--color-surface)]">
+      {/* OHLC HUD — TradingView style */}
+      {ohlc && (
+        <div className="absolute top-2 left-3 z-10 flex items-center gap-3 text-[11px] font-mono tv-fade-in">
+          <span className="text-[color:var(--color-text-primary)] font-semibold">
+            {activeSymbol || 'BTCUSDT'}
           </span>
+          <span className="text-[color:var(--color-text-muted)]">· 1m · Binance</span>
+          <span className="text-[color:var(--color-text-secondary)]">O<span className={`ml-1 ${barCol}`}>{fmt(ohlc.open)}</span></span>
+          <span className="text-[color:var(--color-text-secondary)]">H<span className={`ml-1 ${barCol}`}>{fmt(ohlc.high)}</span></span>
+          <span className="text-[color:var(--color-text-secondary)]">L<span className={`ml-1 ${barCol}`}>{fmt(ohlc.low)}</span></span>
+          <span className="text-[color:var(--color-text-secondary)]">C<span className={`ml-1 ${barCol}`}>{fmt(ohlc.close)}</span></span>
+          {ohlc.open != null && (
+            <span className={barCol}>
+              {(ohlc.close - ohlc.open >= 0 ? '+' : '') + (ohlc.close - ohlc.open).toFixed(2)}
+              {' '}({(((ohlc.close - ohlc.open) / ohlc.open) * 100).toFixed(2)}%)
+            </span>
+          )}
         </div>
       )}
 
-      {/* ⚡ एक्ज़ीक्यूट बटन */}
+      {/* Pane labels */}
+      <div className="pointer-events-none absolute left-3 z-10 text-[10px] font-mono uppercase tracking-wider text-[color:var(--color-text-muted)]" style={{ top: 26 }}>
+        EMA 20 <span className="text-[#F5A623]">●</span>
+      </div>
+      <div className="pointer-events-none absolute left-3 z-10 text-[10px] font-mono uppercase tracking-wider text-[color:var(--color-text-muted)]" style={{ top: '62%' }}>
+        Volume {hoverVol != null && <span className="text-[color:var(--color-text-secondary)]">· {hoverVol.toFixed(0)}</span>}
+      </div>
+      <div className="pointer-events-none absolute left-3 z-10 text-[10px] font-mono uppercase tracking-wider text-[color:var(--color-text-muted)]" style={{ top: '82%' }}>
+        Imbalance {hoverImb != null && (
+          <span className={hoverImb >= 0 ? 'text-[color:var(--color-up)]' : 'text-[color:var(--color-down)]'}>
+            · {hoverImb >= 0 ? '+' : ''}{hoverImb.toFixed(0)}
+          </span>
+        )}
+      </div>
+
+      <div ref={containerRef} className="absolute inset-0" />
+
+      {/* Watermark */}
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <div className="text-[120px] font-bold text-white/[0.018] tracking-tighter select-none">
+          {activeSymbol?.replace('USDT', '') || 'BTC'}
+        </div>
+      </div>
+
+      {/* Execute FAB */}
       <button
-        className="absolute bottom-6 right-6 z-20 w-12 h-12 rounded-full bg-[#00F2FF] hover:bg-white text-black flex items-center justify-center shadow-[0_0_20px_#00F2FF] transition-all transform hover:scale-110"
         onClick={() => setExecuteOpen(true)}
+        title="Execute trade"
+        className="absolute bottom-4 right-16 z-20 h-9 px-3.5 flex items-center gap-2 rounded-md bg-[color:var(--color-accent)] hover:bg-[color:var(--color-accent-hover)] text-white font-medium text-[12px] shadow-lg shadow-black/40 transition-colors"
       >
-        <span className="text-xl">⚡</span>
+        <Zap size={14} /> Trade
       </button>
 
       {marketState === 'SETUP' && (
-        <div className="absolute inset-0 bg-[#00F2FF]/5 pointer-events-none animate-pulse" />
+        <div className="pointer-events-none absolute inset-0 ring-1 ring-inset ring-[color:var(--color-accent)]/25" />
       )}
     </div>
   );
