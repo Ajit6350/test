@@ -77,3 +77,42 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 .tv-fade-in { animation: tv-fade-in 160ms ease-out; }
+
+/* ────────────────────────────────────────────
+   Resizable panel handles (react-resizable-panels)
+   ──────────────────────────────────────────── */
+.tv-handle {
+  position: relative;
+  background: var(--color-border);
+  transition: background-color 140ms ease, box-shadow 140ms ease;
+  flex-shrink: 0;
+}
+.tv-handle-v { width: 1px; cursor: col-resize; }
+.tv-handle-h { height: 1px; cursor: row-resize; }
+
+/* Enlarge the hit area with a pseudo-element so a 1px divider is still
+   easy to grab. The visual divider stays thin and elegant. */
+.tv-handle::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.tv-handle-v::after { left: -3px; right: -3px; top: 0; bottom: 0; }
+.tv-handle-h::after { top: -3px;  bottom: -3px; left: 0; right: 0; }
+
+.tv-handle:hover,
+.tv-handle[data-resize-handle-active] {
+  background: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent-soft);
+}
+
+/* Selection cleanup when dragging a handle */
+[data-panel-group][data-resizing="true"] {
+  user-select: none;
+}
+
+/* Soft glass panel helper (optional usage) */
+.tv-panel {
+  background: color-mix(in oklab, var(--color-surface) 96%, black);
+  backdrop-filter: blur(6px);
+}
