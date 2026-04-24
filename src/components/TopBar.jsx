@@ -5,6 +5,7 @@ import {
   ChevronDown, Undo2, Redo2, Save, Maximize2, Activity,
 } from 'lucide-react';
 import { useMarketStore } from '../stores/useMarketStore';
+import Logo from './Logo';
 
 const timeframes = [
   { label: '1m', value: '1m' },
@@ -37,6 +38,17 @@ const TopBar = ({ isPaper, setIsPaper }) => {
 
   return (
     <div className="w-full h-full flex items-center px-2 gap-1 text-[13px]">
+      {/* Brand */}
+      <a
+        href="#"
+        className="h-7 flex items-center px-1.5 rounded hover:bg-[color:var(--color-surface-3)] transition-colors"
+        title="QuantBridge"
+      >
+        <Logo size={22} />
+      </a>
+
+      <Divider />
+
       {/* Symbol search */}
       <button
         className="h-7 flex items-center gap-2 pl-2 pr-3 rounded bg-[color:var(--color-surface-2)] hover:bg-[color:var(--color-surface-3)] border border-[color:var(--color-border)] transition-colors"
